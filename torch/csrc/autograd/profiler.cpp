@@ -1,5 +1,10 @@
 #include <torch/csrc/autograd/profiler.h>
+#include <torch/csrc/autograd/function.h>
 #include <torch/csrc/jit/frontend/code_template.h>
+
+#include <torch/csrc/jit/runtime/operator.h>
+
+#include <ATen/core/op_registration/op_registration.h>
 
 #include <fstream>
 #include <list>
@@ -191,6 +196,7 @@ void enableProfiler(ProfilerConfig config) {
       /* sampling_prob */ 1.0,
       /* scopes */ {RecordScope::FUNCTION, RecordScope::USER_SCOPE});
   state = new_state;
+  c10::impl::tls_set_dispatch_key_included(c10::DispatchKey::Profiler, true);
 
   if(state == ProfilerState::CUDA) {
     // event recording appears to have some startup overhead, so we need to
@@ -221,6 +227,7 @@ thread_event_lists disableProfiler() {
 
   popCallback();
   state = ProfilerState::Disabled;
+  c10::impl::tls_set_dispatch_key_included(c10::DispatchKey::Profiler, false);
 
   if (old_state == ProfilerState::NVTX) {
     return thread_event_lists();
@@ -339,3 +346,42 @@ void RecordProfile::processEvents(const std::vector<Event*>& events) {
 }
 
 }}}
+
+
+namespace {
+
+void callBoxedWorkaround(const c10::OperatorHandle& op, torch::jit::Stack* stack) {
+  // This should just be op.callBoxed(stack), but that doesn't work for all ops yet.
+  // Note: If op.callBoxed(stack) works for you, then that is preferrable because
+  // it's much faster and doesn't come with a dependency on JIT code.
+  // Instead, we take a path through the JIT operator registry, which has a boxed
+  // calling mechanism that works for all ops from native_functions.yaml.
+
+  auto s = c10::Symbol::fromQualString(op.schema().name());
+  auto operators = torch::jit::getAllOperatorsFor(s);
+  // Find the exact match
+  std::shared_ptr<torch::jit::Operator> jit_op;
+  for (const auto& candidate_op : operators) {
+    auto candidate_schema = candidate_op->schema();
+    // NB: this is a VERY slow equality test
+    if (candidate_schema == op.schema()) {
+      jit_op = candidate_op;
+      break;
+    }
+  }
+  TORCH_INTERNAL_ASSERT(jit_op);
+
+  auto offset = jit_op->getOperation()(*stack);
+  TORCH_INTERNAL_ASSERT(offset == 0);
+}
+
+}  // namespace
+
+void profile_wrapper(const c10::OperatorHandle& op, torch::jit::Stack* stack) {
+  c10::impl::ExcludeDispatchKeyGuard key_guard(c10::DispatchKey::Profiler);
+  RECORD_FUNCTION(op.schema().name(), *stack, torch::autograd::Node::peek_at_next_sequence_nr());
+  callBoxedWorkaround(op, stack);
+}
+
+auto registry = c10::import()
+  .fallback(c10::dispatch(c10::DispatchKey::Profiler, c10::CppFunction::makeFromBoxedFunction<&profile_wrapper>()));

@@ -15,7 +15,6 @@ namespace {
 //      It should also handle autograd.
 Operator createOperatorFromC10(const c10::OperatorHandle& op) {
   return Operator(op, [op](Stack& stack) {
-    RECORD_FUNCTION(op.schema().name(), stack);
     const auto input_size = op.schema().arguments().size();
     const auto output_size = op.schema().returns().size();
 
