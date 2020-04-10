@@ -40,9 +40,6 @@ class SchemaRegistrationHandleRAII;
 class CAFFE2_API Dispatcher final {
 private:
   struct OperatorDef final {
-    explicit OperatorDef(FunctionSchema&& schema)
-    : op(std::move(schema)) {}
-
     explicit OperatorDef(OperatorName&& op_name)
     : op(std::move(op_name)) {}
 
@@ -140,7 +137,7 @@ public:
    * If a schema with the same operator name and overload name already exists,
    * this function will check that both schemas are exactly identical.
    */
-  RegistrationHandleRAII registerDef(FunctionSchema schema);
+  RegistrationHandleRAII registerDef(FunctionSchema schema, std::string debug);
 
   /**
    * Returns true, iff the given operator handle is still valid,
@@ -167,7 +164,7 @@ public:
    * key of the given operator arguments, it will check if there is such a
    * fallback kernel for the given dispatch key and, if yes, call that one.
    */
-  RegistrationHandleRAII registerFallback(DispatchKey dispatch_key, KernelFunction kernel);
+  RegistrationHandleRAII registerFallback(DispatchKey dispatch_key, KernelFunction kernel, std::string debug);
 
   // This function is a temporary hack that allows register_aten_ops.cpp to register its codegen'ed
   // unboxing wrapper for aten operators. We still need those for some operators because not all work
@@ -205,7 +202,7 @@ private:
     std::list<impl::OperatorEntry::KernelEntry>::iterator kernel_handle);
   void deregisterFallback_(DispatchKey dispatchKey);
   void cleanup(const OperatorHandle& op, const OperatorName& op_name);
-  void checkSchemaCompatibility(const OperatorHandle& op, const FunctionSchema& schema);
+  void checkSchemaCompatibility(const OperatorHandle& op, const FunctionSchema& schema, const std::string& debug);
 
   [[noreturn]] static void reportError(const DispatchTable& dispatchTable, DispatchKey dispatchKey);
 
@@ -254,6 +251,10 @@ public:
 
   const FunctionSchema& schema() const {
     return operatorIterator_->op.schema();
+  }
+
+  const std::string& debug() const {
+    return operatorIterator_->op.debug();
   }
 
   std::string dumpState() const {
