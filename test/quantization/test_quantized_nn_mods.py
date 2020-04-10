@@ -567,16 +567,29 @@ class ModuleAPITest(QuantizationTestCase):
 
         # Test serialization of quantized Conv Module using state_dict
         model_dict = qconv_module.state_dict()
-        self.assertEqual(W_q, model_dict['weight'])
+        packed_params = model_dict['_packed_params']
+        self.assertEqual(packed_params.weight(), W_q)
         if use_bias:
-            self.assertEqual(b, model_dict['bias'])
+            self.assertEqual(packed_params.bias(), b)
         bytes_io = io.BytesIO()
-        torch.save(model_dict, bytes_io)
+        # Note that _use_new_zipfile_serialization=False doesn't work
+        # TODO: remove _use_new_zipfile_serialization=True
+        # after https://github.com/pytorch/pytorch/pull/32958 is landed
+        torch.save(model_dict, bytes_io, _use_new_zipfile_serialization=True)
         bytes_io.seek(0)
         loaded_dict = torch.load(bytes_io)
         for key in loaded_dict:
-            self.assertEqual(model_dict[key], loaded_dict[key])
-
+            if key == '_packed_params':
+                m = model_dict['_packed_params']
+                l = loaded_dict['_packed_params']
+                self.assertEqual(m.weight(), l.weight())
+                self.assertEqual(m.bias(), l.bias())
+                self.assertEqual(m.stride(), l.stride())
+                self.assertEqual(m.padding(), l.padding())
+                self.assertEqual(m.dilation(), l.dilation())
+                self.assertEqual(m.groups(), l.groups())
+            else:
+                self.assertEqual(model_dict[key], loaded_dict[key])
         loaded_qconv_module = type(qconv_module)(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             groups, use_bias, padding_mode="zeros")
