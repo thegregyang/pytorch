@@ -41,11 +41,13 @@ bool available(
          (weight.size(Layout::Filter::width) > 0) &&
          (c10::DeviceType::CPU == weight.device().type()) &&
          (kFloat == weight.scalar_type()) &&
+         !weight.requires_grad() &&
          // Bias
          ((bias && bias->defined()) ? ((1 == bias->ndimension()) &&
                                       (c10::DeviceType::CPU == bias->device().type()) &&
                                       (kFloat == bias->scalar_type()) &&
-                                      (weight.size(Layout::Filter::output)) == bias->size(0))
+                                      (weight.size(Layout::Filter::output)) == bias->size(0) &&
+                                      !bias->requires_grad())
                                     : true) &&
          // Padding
          (padding[Layout::Parameter::height] >= 0) &&
@@ -79,6 +81,7 @@ bool usable(const Tensor& input) {
          (input.size(Layout::Activation4D::channels) > 0) &&
          (input.size(Layout::Activation4D::height) > 0) &&
          (input.size(Layout::Activation4D::width) > 0) &&
+         !input.requires_grad() &&
          true;
 }
 
@@ -154,7 +157,9 @@ ContextConv2D create(
       weight_nhwc.size(Layout::Filter::input) * groups,               // input_pixel_stride
       weight_nhwc.size(Layout::Filter::output),                       // output_pixel_stride
       weight_nhwc.data_ptr<float>(),                                  // kernel
-      (bias && bias->defined()) ? bias->data_ptr<float>() : nullptr,  // bias
+      (bias && bias->defined())
+          ? bias->contiguous().data_ptr<float>()
+          : nullptr,                                                  // bias
       output_min,                                                     // output_min
       output_max,                                                     // output_max
       0u,                                                             // flags
